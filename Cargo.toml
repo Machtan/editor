@@ -4,3 +4,5 @@ version = "0.1.0"
 authors = ["Machtan <jako3047@gmail.com>"]
 
 [dependencies]
+sdl2 = "0.13.0"
+sdl2_ttf = { path = "../rust-sdl2_ttf" }
