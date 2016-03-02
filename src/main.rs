@@ -1,10 +1,11 @@
+#![allow(unused)]
 extern crate sdl2;
 extern crate sdl2_ttf;
 
 mod common;
 mod cursor;
 mod textfield;
-mod render_textfield;
+mod render;
 
 use cursor::Cursor;
 use textfield::Textfield;
@@ -41,5 +42,5 @@ fn main() {
     
     let mut field = Textfield::new(text);
     
-    render_textfield::main(&mut field);
+    render::textfield::main(&mut field);
 }

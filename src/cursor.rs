@@ -13,7 +13,7 @@ impl <'a> Lengthy for &'a str {
 }*/
 
 /// A position within a text document
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub struct Cursor {
 	pub line: usize,
 	pub col: usize,
@@ -134,6 +134,15 @@ impl Cursor {
     pub fn constrain(&mut self, source: &Navigable) {
         self.constrain_col(source);
         self.constrain_line(source);
+    }
+    
+    /// Returns copies of the two cursors in the order of smallest to largest.
+    pub fn order(&self, other: &Cursor) -> (Cursor, Cursor) {
+        if self < other {
+            (self.clone(), other.clone())
+        } else {
+            (other.clone(), self.clone())
+        }
     }
 }
 

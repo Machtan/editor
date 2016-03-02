@@ -22,11 +22,12 @@ impl Textfield {
     
     /// Returns whether the text-field has text selected or not
     pub fn has_selection(&self) -> bool {
-        self.selection_marker.constrained(&self.lines) != self.cursor.constrained(&self.lines)
+        let cons = self.selection_marker.constrained(&self.lines);
+        cons != self.cursor.constrained(&self.lines)
     }
     
     /// Deselects the current selected area
-    pub fn deselect(&mut self) {
+    pub fn clear_selection(&mut self) {
         self.selection_marker = self.cursor.clone();
     }
     
@@ -47,7 +48,7 @@ impl Textfield {
         } else {
             self.cursor.left(&self.lines);
         }
-        self.deselect();
+        self.clear_selection();
     }
     
     /// Movest the cursor right
@@ -57,33 +58,33 @@ impl Textfield {
         } else {
             self.cursor.right(&self.lines);
         }
-        self.deselect();
+        self.clear_selection();
     }
     
     /// Moves the cursor up
     pub fn up(&mut self) {
         if self.has_selection() {
-            let mut tmp = self.cursor.clone_min(&self.selection_marker);
-            tmp.up();
-            tmp.col = self.cursor.col;
-            self.cursor = tmp;
+            let tmp = self.cursor.clone_min(&self.selection_marker);
+            let mut cons = tmp.constrained(&self.lines);
+            cons.up();
+            self.cursor = cons;
         } else {
             self.cursor.up();
         }
-        self.deselect();
+        self.clear_selection();
     }
     
     /// Moves the cursor down
     pub fn down(&mut self) {
         if self.has_selection() {
-            let mut tmp = self.cursor.clone_max(&self.selection_marker);
-            tmp.down(&self.lines);
-            tmp.col = self.cursor.col;
-            self.cursor = tmp;
+            let tmp = self.cursor.clone_max(&self.selection_marker);
+            let mut cons = tmp.constrained(&self.lines);
+            cons.down(&self.lines);
+            self.cursor = cons;
         } else {
             self.cursor.down(&self.lines);
         }
-        self.deselect();
+        self.clear_selection();
     }
     
     pub fn select_left(&mut self) {
@@ -122,19 +123,38 @@ impl Textfield {
         }
     }
     
+    /// Returns the current selected text.
     pub fn selected_text(&mut self) -> String {
-        String::new()
+        let mut text = String::new();
+        if ! self.has_selection() {
+            return text
+        }
+        let (first, last) = self.cursor.order(&self.selection_marker);
+        if first.line == last.line {
+            let ref line = self.lines[first.line];
+            let left_index = line.slice_until(first.col).len();
+            let right_index = line.len() - line.slice_after(last.col).len();
+            text.push_str(&line[left_index .. right_index]);
+        } else {
+            text.push_str(self.lines[first.line].slice_after(first.col));
+            text.push_str("\n");
+            let middle_lines = last.line - first.line - 1;
+            for i in 0 .. middle_lines {
+                text.push_str(&self.lines[first.line + i + 1]);
+                text.push_str("\n");
+            }
+            text.push_str(self.lines[last.line].slice_until(last.col));
+        }
+        
+        text
     }
     
+    /// Deletes the current selection of the text field.
     pub fn delete_selection(&mut self) {
         if ! self.has_selection() {
             return;
         }
-        let (first, last) = if self.cursor < self.selection_marker {
-            (self.cursor.clone(), self.selection_marker.clone())
-        } else {
-            (self.selection_marker.clone(), self.cursor.clone())
-        };
+        let (first, last) = self.cursor.order(&self.selection_marker);
         // Same line
         if first.line == last.line {
             let text = {
@@ -162,10 +182,11 @@ impl Textfield {
             }
         }
         self.cursor = first.clone();
-        self.selection_marker = first.clone();
+        self.clear_selection();
     }
     
-    pub fn delete(&mut self) {
+    /// Delete a character bacward in the text, or the current selection.
+    pub fn delete_previous(&mut self) {
         if ! self.has_selection() {
             let cons = self.cons_cursor();
             // Delete within same line
@@ -180,27 +201,89 @@ impl Textfield {
                 self.lines[self.cursor.line] = text;
                 self.cursor = cons;
                 self.cursor.col -= 1;
-                self.deselect();
+                self.clear_selection();
+            
             // Merge with previous (if any)
             } else {
                 if self.cursor.line != 0 {
                     let line = self.lines.remove(self.cursor.line);
+                    let prev_len = self.lines[self.cursor.line - 1]
+                        .chars().count();
                     self.lines[self.cursor.line - 1].push_str(&line);
-                    self.cursor = Cursor::new(self.cursor.line - 1, line.len());
-                    self.deselect();
+                    self.cursor = Cursor::new(self.cursor.line - 1, prev_len);
+                    self.clear_selection();
                 }
-                
             }
         } else {
             self.delete_selection();
         }
     }
     
-    pub fn delete_forward(&mut self) {
+    /// Delete a character forward in the text, or the current selection.
+    pub fn delete_next(&mut self) {
         if ! self.has_selection() {
+            let cons = self.cons_cursor();
+            let line_len = self.lines[cons.line].chars().count();
+            // Delete within same line
+            if cons.col != line_len {
+                let text = {
+                    let ref line = self.lines[self.cursor.line];
+                    let mut new_line = String::new();
+                    new_line.push_str(line.slice_until(cons.col));
+                    new_line.push_str(line.slice_after(cons.col + 1));
+                    new_line
+                };
+                self.lines[self.cursor.line] = text;
+                self.cursor = cons;
+                self.clear_selection();
+            
+            // Merge with next (if any)
+            } else {
+                if self.cursor.line != (self.lines.len() - 1) {
+                    let line = self.lines.remove(self.cursor.line + 1);
+                    self.lines[self.cursor.line].push_str(&line);
+                    self.cursor = cons;
+                    self.clear_selection();
+                }
+            }
         
         } else {
             self.delete_selection();
         }
+    }
+    
+    pub fn insert(&mut self, text: &str) {
+        self.delete_selection();
+        let start = self.cursor.line;
+        
+        let left = String::from(self.lines[start].slice_until(self.cursor.col));
+        let right = String::from(self.lines[start].slice_after(self.cursor.col));
+        self.lines[start] = left;
+        let mut num_lines = 0;
+        for (num, line) in text.lines().enumerate() {
+            if num == 0 {
+                self.lines[start].push_str(line);
+            } else {
+                self.lines.insert(start + num + 1, String::from(line));
+            }
+            num_lines += 1;
+        }
+        if text.ends_with("\n") { // Insert the line that 'lines' ignores
+            self.lines.insert(start + num_lines, String::new());
+            num_lines += 1;
+        }
+        
+        // Update the cursor
+        if num_lines == 1 {
+            self.cursor = self.cons_cursor();
+            self.cursor.col += text.chars().count();
+        } else {
+            let line_chars = self.lines[start + num_lines - 1].chars().count();
+            self.cursor = Cursor::new(start + num_lines - 1, line_chars);
+        }
+        self.clear_selection();
+        
+        // Add the last part to the last line
+        self.lines[start + num_lines - 1].push_str(&right);
     }
 }
