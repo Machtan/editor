@@ -44,11 +44,11 @@ pub struct TextfieldStyle {
 }
 
 /// Find out at which x coordinate to render a cursor in the given line of text.
-fn cursor_line_x_pos(col: usize, text: &str, font: Rc<Font>) -> u32 {
-    if col >= text.len() {
-        font.size_of(text).unwrap().0
+pub fn cursor_x_pos(col: usize, line: &str, font: Rc<Font>) -> i32 {
+    if col >= line.len() {
+        font.size_of(line).unwrap().0 as i32
     } else {
-        let boundary: Vec<_> = text.char_indices().skip(col-1).take(2).collect();
+        let boundary: Vec<_> = line.char_indices().skip(col-1).take(2).collect();
         let (left_index, left_char) = boundary[0];
         let (right_index, right_char) = boundary[1];
         let left_char_width = font.size_of_char(left_char).unwrap().0;
@@ -61,54 +61,47 @@ fn cursor_line_x_pos(col: usize, text: &str, font: Rc<Font>) -> u32 {
 
         let single_width = left_char_width + right_char_width;
         let char_offset = (combined_width - single_width) / 2;
-        let text_width = font.size_of(&text[..right_index]).unwrap().0;
-        text_width + char_offset
+        let line_width = font.size_of(&line[..right_index]).unwrap().0;
+        (line_width + char_offset) as i32
     }
 }
 
 /// Find out where to render a cursor in the given line of text.
-fn cursor_line(col: usize, text: &str, font: Rc<Font>, wrap_width: Option<u32>)
-        -> (Point, Point) {
+/// Returns a line number and the x position of the cursor in it.
+/// The line number is only relevant when the text is being wrapped.
+pub fn cursor_pos(col: usize, line: &str, font: Rc<Font>, wrap_width: Option<u32>)
+        -> (usize, i32) {
     if col == 0 {
-        return (Point::new(0, 0), Point::new(0, font.recommended_line_height() as i32));
+        return (0, 0);
     } else if let Some(ww) = wrap_width {
-        let height = font.recommended_line_height();
         let mut col_remainder = col;
-        let lines = wrap_line(text, &|t: &str| font.width_of(t), ww);
+        let lines = wrap_line(line, &|t: &str| font.width_of(t), ww);
         let last = lines.len() - 1;
         for (i, line) in lines.into_iter().enumerate() {
             if col_remainder <= line.chars().count() || i == last {
-                let x = cursor_line_x_pos(col_remainder, line, font);
-                let y = (i * height as usize) as i32;
-                return (
-                    Point::new(x as i32, y),
-                    Point::new(x as i32, y + height as i32)
-                );
+                let x = cursor_x_pos(col_remainder, line, font);
+                return (i, x);
             } else {
                 col_remainder -= line.chars().count();
             }
         }
         unreachable!();
     } else {
-        let height = font.recommended_line_height();
-        let x = cursor_line_x_pos(col, text, font);
-        return (
-            Point::new(x as i32, 0), 
-            Point::new(x as i32, height as i32)
-        );
+        let x = cursor_x_pos(col, line, font);
+        return (0, x);
     }
 }
 
 /// Wraps a single (loooong) word to fit within the given line width.
-fn wrap_word<'a, F>(text: &'a str, width_check: &F, wrap_width: u32)
+fn wrap_word<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
         -> Vec<&'a str> 
         where F: Fn(&str) -> u32 {
     let mut lines = Vec::new();
     let mut start = 0;
     let mut last_index = 0;
-    for (i, ch) in text.char_indices() {
-        if width_check(&text[start..i]) > wrap_width {
-            let part = &text[start..last_index];
+    for (i, ch) in line.char_indices() {
+        if width_check(&line[start..i]) > wrap_width {
+            let part = &line[start..last_index];
             if part != "" {
                 lines.push(part);
             }
@@ -117,7 +110,7 @@ fn wrap_word<'a, F>(text: &'a str, width_check: &F, wrap_width: u32)
             last_index = i;
         }
     }
-    lines.push(&text[start..]);
+    lines.push(&line[start..]);
     lines
 }
 
@@ -262,10 +255,87 @@ pub fn selection_full(line: &str, font: Rc<Font>, width: u32,
     selections
 }
 
-pub fn selections(first: Cursor, last: Cursor, line: &str, font: Rc<Font>,
-        wrap_width: Option<u32>) -> Vec<Rect> {
+pub fn selections(first: Cursor, last: Cursor, lineno: usize, line: &str, 
+        font: Rc<Font>, wrap_width: Option<u32>, width: u32) -> Vec<Rect> {
     let mut selections = Vec::new();
+    let height = font.recommended_line_height();
     
+    // Full selected line
+    if first.line < lineno && lineno < last.line {
+        let count = if let Some(ww) = wrap_width {
+            wrap_line(line, &|t: &str| font.clone().width_of(t), ww).len()
+        } else {
+            1
+        };
+        for i in 0 .. count {
+            selections.push(Rect::new(0, (i as u32 * height) as i32, width, height));
+        }
+    // Selection starts here 
+    } else if lineno == first.line {
+        // And ends on the same line of text
+        if last.line == lineno {
+            println!("Selection start and end at {}", lineno);
+            let (first_lineno, fx) = cursor_pos(first.col, line, font.clone(), wrap_width);
+            let (last_lineno, lx) = cursor_pos(last.col, line, font, wrap_width);
+            if last_lineno == first_lineno {
+                let rect = Rect::new(
+                    fx, (first_lineno as u32 * height) as i32, 
+                    (lx - fx) as u32, height
+                );
+                selections.push(rect);
+            } else {
+                let first = Rect::new(
+                    fx, (first_lineno as u32 * height) as i32,
+                    width - fx as u32, height 
+                );
+                selections.push(first);
+                for i in 0 .. (last_lineno - (first_lineno + 1)) {
+                    let middle = Rect::new(
+                        0, ((first_lineno + 1) as u32 * height) as i32,
+                        width, height
+                    );
+                    selections.push(middle)
+                }
+                let last = Rect::new(
+                    0, (last_lineno as u32 * height) as i32,
+                    lx as u32, height
+                );
+                selections.push(last);
+            }
+        } else {
+            println!("Selection start at {}", lineno);
+            if let Some(ww) = wrap_width {
+                let last_line = wrap_line(line, &|t: &str| font.clone().width_of(t), ww).len() - 1;
+                let (lineno, x) = cursor_pos(first.col, line, font, wrap_width);
+                let start = Rect::new(x, (lineno as u32 * height) as i32, ww - x as u32, height);
+                selections.push(start);
+                println!("Start: {:?}", start);
+                if lineno < last_line {
+                    let rest = Rect::new(
+                        0, start.bottom(), 
+                        ww, (last_line - lineno) as u32 * height
+                    );
+                    selections.push(rest);
+                    println!("Rest: {:?}", rest);
+                }
+            } else {
+                let (_, x) = cursor_pos(first.col, line, font, wrap_width);
+                selections.push(Rect::new(x, 0, width - x as u32, height));
+            }
+        }
+    // Selection ends here
+    } else if lineno == last.line {
+        println!("Selection end at {}", lineno);
+        let (lineno, x) = cursor_pos(last.col, line, font, wrap_width);
+        if lineno != 0 {
+            let pre = Rect::new(0, 0, wrap_width.unwrap(), lineno as u32 * height);
+            selections.push(pre);
+            println!("Pre: {:?}", pre);
+        }
+        let last = Rect::new(0, 0, x as u32, height);
+        selections.push(last);
+        println!("Last: {:?}", last);
+    }
     selections
 }
 
@@ -298,14 +368,17 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
         if has_selection {
             if lineno >= first.line && lineno <= last.line {
                 renderer.set_draw_color(style.selection_color);
-                for rect in selections(first, last, line, font.clone(), wrap_width) {
+                //println!("Selections:");
+                for mut rect in selections(first, last, lineno, line, font.clone(), wrap_width, rect.width()) {
+                    //println!("- {:?}", rect);
+                    rect.offset(x, y + (lineno as u32 * height) as i32);
                     renderer.fill_rect(rect).expect("Could not draw selection");
                 }
             }
         } else if lineno == first.line {
-            let (mut start, mut end) = cursor_line(first.col, line, font.clone(), wrap_width);
-            start = start.offset(x, y + (lineno as u32 * height) as i32);
-            end = end.offset(x, y + (lineno as u32 * height) as i32);
+            let (clineno, cx) = cursor_pos(first.col, line, font.clone(), wrap_width);
+            let start = Point::new(x + cx, y + ((lineno + clineno) as u32 * height) as i32);
+            let end = Point::new(x + cx, y + ((lineno + clineno + 1) as u32 * height) as i32);
             renderer.set_draw_color(style.cursor_color);
             renderer.draw_line(start, end).expect("Could not draw cursor");
         }
@@ -354,10 +427,10 @@ pub fn old_render_textfield(field: &Textfield, rect: Rect,
             if lineno == first.line {
                 // Single-line selection
                 if last.line == first.line { 
-                    let x_left = x + cursor_line_x_pos(
+                    let x_left = x + cursor_x_pos(
                         first.col, line, style.text.font.clone()
                     ) as i32;
-                    let x_right = x + cursor_line_x_pos(
+                    let x_right = x + cursor_x_pos(
                         last.col, line, style.text.font.clone()
                     ) as i32;
                     let width = (x_right - x_left) as u32;
@@ -368,11 +441,11 @@ pub fn old_render_textfield(field: &Textfield, rect: Rect,
 
                 // Multi-line selection
                 } else { 
-                    let offset = cursor_line_x_pos(
+                    let offset = cursor_x_pos(
                         first.col, line, style.text.font.clone()
                     );
                     let rect = Rect::new(
-                        x + offset as i32, y_pos, rect.width() - offset,
+                        x + offset as i32, y_pos, rect.width() - offset as u32,
                         line_height as u32
                     );
                     renderer.fill_rect(rect);
@@ -385,12 +458,12 @@ pub fn old_render_textfield(field: &Textfield, rect: Rect,
         
             // Final line
             } else if lineno == last.line {
-                let offset = cursor_line_x_pos(
+                let offset = cursor_x_pos(
                     last.col, line, style.text.font.clone()
                 );
                 if offset != 0 {
                     let rect = Rect::new(
-                        x, y_pos, offset, line_height as u32
+                        x, y_pos, offset as u32, line_height as u32
                     );
                     renderer.fill_rect(rect);
                 }
@@ -398,7 +471,7 @@ pub fn old_render_textfield(field: &Textfield, rect: Rect,
         
         // Normal cursor
         } else if lineno == first.line {
-            let x_pos = x + cursor_line_x_pos(
+            let x_pos = x + cursor_x_pos(
                 field.cons_cursor().col, line, style.text.font.clone()
             ) as i32;
             renderer.set_draw_color(style.cursor_color);
