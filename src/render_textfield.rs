@@ -91,14 +91,16 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
             if lineno >= first.line && lineno <= last.line {
                 renderer.set_draw_color(style.selection_color);
                 //println!("Selections:");
-                for mut rect in selections(first, last, lineno, line, font.clone(), wrap_width, rect.width()) {
+                for mut rect in selections(first, last, lineno, line, 
+                    &|t: &str| font.width_of(t), wrap_width, rect.width(), height
+                ) {
                     //println!("- {:?}", rect);
                     rect.offset(x, y + (lineno as u32 * height) as i32);
                     renderer.fill_rect(rect).expect("Could not draw selection");
                 }
             }
         } else if lineno == first.line {
-            let (clineno, cx) = cursor_pos(first.col, line, font.clone(), wrap_width);
+            let (clineno, cx) = cursor_pos(first.col, line, &|t: &str| font.width_of(t), wrap_width);
             let start = Point::new(x + cx, y + ((lineno + clineno) as u32 * height) as i32);
             let end = Point::new(x + cx, y + ((lineno + clineno + 1) as u32 * height) as i32);
             renderer.set_draw_color(style.cursor_color);
@@ -150,10 +152,10 @@ pub fn old_render_textfield(field: &Textfield, rect: Rect,
                 // Single-line selection
                 if last.line == first.line { 
                     let x_left = x + cursor_x_pos(
-                        first.col, line, style.text.font.clone()
+                        first.col, line, &|t: &str| style.text.font.width_of(t)
                     ) as i32;
                     let x_right = x + cursor_x_pos(
-                        last.col, line, style.text.font.clone()
+                        last.col, line, &|t: &str| style.text.font.width_of(t)
                     ) as i32;
                     let width = (x_right - x_left) as u32;
                     let rect = Rect::new(
@@ -164,7 +166,7 @@ pub fn old_render_textfield(field: &Textfield, rect: Rect,
                 // Multi-line selection
                 } else { 
                     let offset = cursor_x_pos(
-                        first.col, line, style.text.font.clone()
+                        first.col, line, &|t: &str| style.text.font.width_of(t)
                     );
                     let rect = Rect::new(
                         x + offset as i32, y_pos, rect.width() - offset as u32,
@@ -181,7 +183,7 @@ pub fn old_render_textfield(field: &Textfield, rect: Rect,
             // Final line
             } else if lineno == last.line {
                 let offset = cursor_x_pos(
-                    last.col, line, style.text.font.clone()
+                    last.col, line, &|t: &str| style.text.font.width_of(t)
                 );
                 if offset != 0 {
                     let rect = Rect::new(
@@ -194,7 +196,7 @@ pub fn old_render_textfield(field: &Textfield, rect: Rect,
         // Normal cursor
         } else if lineno == first.line {
             let x_pos = x + cursor_x_pos(
-                field.cons_cursor().col, line, style.text.font.clone()
+                field.cons_cursor().col, line, &|t: &str| style.text.font.width_of(t)
             ) as i32;
             renderer.set_draw_color(style.cursor_color);
             renderer.draw_line(
