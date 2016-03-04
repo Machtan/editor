@@ -56,7 +56,7 @@ pub fn cursor_pos<F>(col: usize, line: &str, width_check: &F, wrap_width: Option
         let lines = wrap_line(line, width_check, ww);
         let last = lines.len() - 1;
         for (i, line) in lines.into_iter().enumerate() {
-            if col_remainder <= line.chars().count() || i == last {
+            if col_remainder < line.chars().count() || i == last {
                 let x = cursor_x_pos(col_remainder, line, width_check);
                 return (i, x);
             } else {
