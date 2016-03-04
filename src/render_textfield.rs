@@ -84,25 +84,25 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
     let x = rect.x() + style.x_pad as i32;
     let y = rect.y() + style.y_pad as i32;
     let height = style.text.font.recommended_line_height();
-    let mut lineno = 0;
-    for line in field.lines.iter() {
+    let mut visual_lineno = 0;
+    for (lineno, line) in field.lines.iter().enumerate() {
         // Selection
         if has_selection {
-            if lineno >= first.line && lineno <= last.line {
+            if visual_lineno >= first.line && visual_lineno <= last.line {
                 renderer.set_draw_color(style.selection_color);
                 //println!("Selections:");
-                for mut rect in selections(first, last, lineno, line, 
+                for mut rect in selections(first, last, visual_lineno, line, 
                     &|t: &str| font.width_of(t), wrap_width, rect.width(), height
                 ) {
                     //println!("- {:?}", rect);
-                    rect.offset(x, y + (lineno as u32 * height) as i32);
+                    rect.offset(x, y + (visual_lineno as u32 * height) as i32);
                     renderer.fill_rect(rect).expect("Could not draw selection");
                 }
             }
         } else if lineno == first.line {
-            let (clineno, cx) = cursor_pos(first.col, line, &|t: &str| font.width_of(t), wrap_width);
-            let start = Point::new(x + cx, y + ((lineno + clineno) as u32 * height) as i32);
-            let end = Point::new(x + cx, y + ((lineno + clineno + 1) as u32 * height) as i32);
+            let (cvisual_lineno, cx) = cursor_pos(first.col, line, &|t: &str| font.width_of(t), wrap_width);
+            let start = Point::new(x + cx, y + ((visual_lineno + cvisual_lineno) as u32 * height) as i32);
+            let end = Point::new(x + cx, y + ((visual_lineno + cvisual_lineno + 1) as u32 * height) as i32);
             renderer.set_draw_color(style.cursor_color);
             renderer.draw_line(start, end).expect("Could not draw cursor");
         }
@@ -110,17 +110,17 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
         
         // Text
         if line.is_empty() {
-            lineno += 1;
+            visual_lineno += 1;
             continue;
         }
         for surface in line_surfaces(line, &style.text, wrap_width) {
             let target = Rect::new(
-                x, y + (lineno as u32 * height) as i32, surface.width(), surface.height()
+                x, y + (visual_lineno as u32 * height) as i32, surface.width(), surface.height()
             );
             let mut texture = renderer.create_texture_from_surface(&surface)
                 .expect("Could not create text texture");
             renderer.copy(&mut texture, None, Some(target));
-            lineno += 1;
+            visual_lineno += 1;
         }
     }
     
