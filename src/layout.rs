@@ -83,7 +83,7 @@ pub fn wrap_word<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
         if width_check(&line[start..next_index]) > wrap_width {
             let part = &line[start..last_index];
             if part != "" {
-                println!("--- '{}'", part);
+                //println!("--- '{}'", part);
                 lines.push(part);
             }
             start = last_index;
@@ -92,7 +92,7 @@ pub fn wrap_word<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
         last_index = next_index;
     }
     let part = &line[start..];
-    println!("--- '{}'", part);
+    //println!("--- '{}'", part);
     lines.push(part);
     lines
 }
@@ -142,12 +142,12 @@ pub fn wrap_line<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
                     if width_check(&line[start..cur_word_end]) > wrap_width {
                         if start == last_word_begin { // Single word read
                             let part = &line[start..cur_word_begin];
-                            println!("- '{}'", part);
+                            //println!("- '{}'", part);
                             lines.append(&mut wrap_word(part, width_check, wrap_width));
                             start = cur_word_begin;
                         } else { // Two or more words read
                             let part = &line[start..last_word_begin];
-                            println!("- '{}'", part);
+                            //println!("- '{}'", part);
                             lines.push(part);
                             start = last_word_begin;
                         }
@@ -158,28 +158,36 @@ pub fn wrap_line<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
             }
         }
         
+        //println!("Remainder:");
         // Get the remainder
-        cur_word_begin = line.len();
+        // If the line doesn't end with a space character, act as if a new word just started
+        if cur_word_begin != line.len() {
+            last_word_begin = cur_word_begin;
+            cur_word_begin = line.len();
+        }
+        
         if width_check(&line[start..cur_word_end]) > wrap_width {
             if start == last_word_begin {
                 let part = &line[start..cur_word_begin];
-                println!("- '{}'", part);
+                //println!("- '{}'", part);
                 lines.append(&mut wrap_word(part, width_check, wrap_width));
                 start = cur_word_begin;
             } else {
                 let part = &line[start..last_word_begin];
-                println!("- '{}'", part);
+                //println!("- '{}'", part);
                 lines.push(part);
                 start = last_word_begin;
                 
-                let part = &line[start..cur_word_begin];
-                println!("- '{}'", part);
-                lines.push(part);
-                start = cur_word_begin;
+                if start != line.len() {
+                    let part = &line[start..cur_word_begin];
+                    //println!("- '{}'", part);
+                    lines.push(part);
+                    start = cur_word_begin;
+                }
             }
         } else {
             let part = &line[start..];
-            println!("- '{}'", part);
+            //println!("- '{}'", part);
             lines.push(part);
             start = cur_word_begin;
         }
@@ -299,6 +307,12 @@ mod tests {
     789\
     0 333 ";
     
+    const TEXT4: &'static str = "\
+    333 22 \
+    1 4444 \
+    22 333\
+    ";
+    
     fn width_check(t: &str) -> u32 {
         t.chars().count() as u32
     }
@@ -327,6 +341,11 @@ mod tests {
         assert_eq!(res, vec!["12", "34", "56", "78", "90"]);
     }
     
+    #[test]
+    fn test_wrap_line_multiple_three() {
+        let res = wrap_line(TEXT2, &width_check, 3);
+        assert_eq!(res, vec!["333 ", "22     ", "1 ", "4444  ", "22 ", "333   "]);
+    }
     
     #[test]
     fn test_wrap_line_multiple_six() {
@@ -335,9 +354,9 @@ mod tests {
     }
     
     #[test]
-    fn test_wrap_line_multiple_three() {
-        let res = wrap_line(TEXT2, &width_check, 3);
-        assert_eq!(res, vec!["333 ", "22     ", "1 ", "4444  ", "22 ", "333   "]);
+    fn test_wrap_line_no_trailing_space() {
+        let res = wrap_line(TEXT4, &width_check, 6);
+        assert_eq!(res, vec!["333 22 ", "1 4444 ", "22 333"]);
     }
     
     #[test]
@@ -347,7 +366,7 @@ mod tests {
     }
     
     #[test]
-    fn test_cursor_x_non_zero() {
+    fn test_cursor_x_pos_non_zero() {
         let res = cursor_x_pos(2, "hello", &width_check);
         assert_eq!(res, 2);
     }
