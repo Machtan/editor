@@ -77,118 +77,114 @@ pub fn wrap_word<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
     let mut lines = Vec::new();
     let mut start = 0;
     let mut last_index = 0;
-    for (i, ch) in line.char_indices() {
-        if width_check(&line[start..i]) > wrap_width {
+    let mut indices: Vec<_> = line.char_indices().skip(1).map(|(i, c)| i).collect();
+    indices.push(line.len());
+    for next_index in indices {
+        if width_check(&line[start..next_index]) > wrap_width {
             let part = &line[start..last_index];
             if part != "" {
+                println!("--- '{}'", part);
                 lines.push(part);
             }
             start = last_index;
-        } else {
-            last_index = i;
+            
         }
+        last_index = next_index;
     }
-    lines.push(&line[start..]);
+    let part = &line[start..];
+    println!("--- '{}'", part);
+    lines.push(part);
     lines
-}
-
-/// Wrap a line without handling the wrapping of words that are too long to
-/// fit on a single line (based on the wrap width).
-pub fn wrap_line_simple<'a, F>(text: &'a str, width_check: &F, wrap_width: u32)
-        -> Vec<&'a str> 
-        where F: Fn(&str) -> u32 {
-    if width_check(text) <= wrap_width {
-        vec![text]
-    } else {
-        let mut lines = Vec::new();
-        let mut start = 0;
-        // The last 'boundary' (whitespace character)
-        let mut last_word_start = 0;
-        // Ignore whitespace after the first in a sequence
-        let mut was_whitespace = true;
-        let mut words_read = 0;
-        let indices: Vec<_> = text.char_indices().collect();
-        for (col, &(i, ch)) in indices.iter().enumerate() {
-            if ch.is_whitespace() {
-                // Not a whitespace sequence
-                if ! was_whitespace {
-                    words_read += 1;
-                    // Current run too wide for the line
-                    if width_check(&text[start..i]) > wrap_width {
-                        // Only this word to split
-                        if words_read == 1 {
-                            if let Some(&(index, _)) = indices[col..]
-                                    .iter().find(|&&(i, ch)| {
-                                ! ch.is_whitespace()
-                            }) {
-                                lines.push(&text[start..index]);
-                                words_read = 0;
-                                start = index;
-                                last_word_start = index;
-                            } else {
-                                break;
-                            }
-                        } else {
-                            let last = &text[start..last_word_start];
-                            if last != "" {
-                                //println!("More words to split: {}", &text[start..last_word_start]);
-                                lines.push(last);
-                            }
-                    
-                            start = last_word_start;
-                            words_read = 1;
-                        }
-                    }
-                    was_whitespace = true;
-                }
-            } else {
-                // Set the indices of the first character after whitespace to 'last_word_start'
-                if was_whitespace {
-                    last_word_start = i;
-                }
-                was_whitespace = false;
-            }
-        }
-        //println!("Remainder: {}", &text[start..]);
-        
-        let last = &text[start..last_word_start];
-        if last != "" {
-            lines.push(last);
-            start = last_word_start;
-        }
-        
-        // Push the remainder
-        let remainder = &text[start..];
-        assert!(remainder != "");
-        lines.push(remainder);
-        //println!("Lines: {:?}", lines);
-        lines
-    }
 }
 
 /// Splits the given text into lines of text fitting the given wrap width when
-/// using the given font.
-pub fn wrap_line<'a, F>(text: &'a str, width_check: &F, wrap_width: u32)
+/// using the given width checking function.
+pub fn wrap_line<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
         -> Vec<&'a str> 
         where F: Fn(&str) -> u32 {
-    let mut lines = wrap_line_simple(text, width_check, wrap_width);
-    let mut i = 0;
-    while i < lines.len() {
-        let line = lines[i];
-        if width_check(&line) > wrap_width {
-            let parts = wrap_word(text, width_check, wrap_width);
-            let new_lines = parts.len();
-            //println!("'{}' too long => {:?}", line, parts);
-            lines[i] = parts[0];
-            for (j, part) in parts.into_iter().skip(1).enumerate() {
-                lines.insert(i + 1 + j, part);
+    if width_check(line) <= wrap_width {
+        vec![line]
+    
+    } else {
+        let mut lines = Vec::new();
+        
+        let mut start = 0;
+        let mut cur_word_begin = 0;
+        let mut cur_word_end = 0;
+        let mut last_word_begin = 0;
+        
+        let mut was_whitespace = false;
+        let mut words_read = 0; // When single words are too long to fit in a line
+        
+        // Create indices of each character and each next index. 
+        // (where the character ends, instead of where it begins)
+        let indices = {
+            let mut result = Vec::new();
+            let mut indices: Vec<_> = line.char_indices().skip(1).map(|(i, c)| i).collect();
+            indices.push(line.len());
+            for (i, ch) in line.chars().enumerate() {
+                result.push((indices[i], ch));
             }
-            i += new_lines;
-        } else {
-            i += 1;
+            result
+        };
+        
+        for (chi, &(next_index, ch)) in indices.iter().enumerate() {
+            if ch.is_whitespace() {
+                if ! was_whitespace { // New spacing begins
+                    last_word_begin = cur_word_begin;
+                }
+                cur_word_begin = next_index;
+                was_whitespace = true;
+            
+            } else {
+                if was_whitespace { // New word begins
+                    
+                    if width_check(&line[start..cur_word_end]) > wrap_width {
+                        if start == last_word_begin { // Single word read
+                            let part = &line[start..cur_word_begin];
+                            println!("- '{}'", part);
+                            lines.append(&mut wrap_word(part, width_check, wrap_width));
+                            start = cur_word_begin;
+                        } else { // Two or more words read
+                            let part = &line[start..last_word_begin];
+                            println!("- '{}'", part);
+                            lines.push(part);
+                            start = last_word_begin;
+                        }
+                    }
+                }
+                cur_word_end = next_index;
+                was_whitespace = false;
+            }
         }
+        
+        // Get the remainder
+        cur_word_begin = line.len();
+        if width_check(&line[start..cur_word_end]) > wrap_width {
+            if start == last_word_begin {
+                let part = &line[start..cur_word_begin];
+                println!("- '{}'", part);
+                lines.append(&mut wrap_word(part, width_check, wrap_width));
+                start = cur_word_begin;
+            } else {
+                let part = &line[start..last_word_begin];
+                println!("- '{}'", part);
+                lines.push(part);
+                start = last_word_begin;
+                
+                let part = &line[start..cur_word_begin];
+                println!("- '{}'", part);
+                lines.push(part);
+                start = cur_word_begin;
+            }
+        } else {
+            let part = &line[start..];
+            println!("- '{}'", part);
+            lines.push(part);
+            start = cur_word_begin;
+        }
+        lines
     }
-    lines
 }
 
 /// Returns the selection rectangles for the given line and cursors.
@@ -297,8 +293,20 @@ mod tests {
     22 333   \
     ";
     
+    const TEXT3: &'static str = "\
+    123\
+    456\
+    789\
+    0 333 ";
+    
     fn width_check(t: &str) -> u32 {
         t.chars().count() as u32
+    }
+    
+    #[test]
+    fn test_wrap_word() {
+        let res = wrap_word(TEXT, &width_check, 3);
+        assert_eq!(res, vec!["123", "456", "789", "0"]);
     }
     
     #[test]
@@ -308,10 +316,17 @@ mod tests {
     }
     
     #[test]
+    fn test_wrap_line_long_multiple() {
+        let res = wrap_line(TEXT3, &width_check, 3);
+        assert_eq!(res, vec!["123", "456", "789", "0 ", "333 "]);
+    }
+    
+    #[test]
     fn test_wrap_line_long_no_remainder() {
         let res = wrap_line(TEXT, &width_check, 2);
         assert_eq!(res, vec!["12", "34", "56", "78", "90"]);
     }
+    
     
     #[test]
     fn test_wrap_line_multiple_six() {
