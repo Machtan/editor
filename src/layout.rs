@@ -187,13 +187,12 @@ pub fn wrap_line<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
 }
 
 /// Returns the rectangles of a selection which starts and ends on the same line.
-pub fn selection_single_line<F>(start: usize, end: usize, line: &str,
-        width_check: &F, wrap_width: Option<u32>, line_height: u32) 
+pub fn selection_single_line<F>(lines: &Vec<&str>, start: usize, end: usize, 
+        width_check: &F, line_width: u32, line_height: u32) 
         -> Vec<Rect> 
         where F: Fn(&str) -> u32 {
-    if let Some(wrap_width) = wrap_width {
+    if lines.len() > 1 {
         let mut selections = Vec::new();
-        let lines = wrap_line(line, width_check, wrap_width);
         let (sl, sx) = cursor_pos(start, &lines, width_check);
         let (el, ex) = cursor_pos(end, &lines, width_check);
         if sl == el {
@@ -205,14 +204,14 @@ pub fn selection_single_line<F>(start: usize, end: usize, line: &str,
         } else {
             let first = Rect::new(
                 sx, (sl as u32 * line_height) as i32, 
-                wrap_width - sx as u32, line_height
+                line_width - sx as u32, line_height
             );
             selections.push(first);
             let middle_lines = sl - el - 1;
             if middle_lines != 0 {
                 let middle = Rect::new(
                     0, line_height as i32, 
-                    wrap_width, middle_lines as u32 * line_height
+                    line_width, middle_lines as u32 * line_height
                 );
                 selections.push(middle);
             }
@@ -224,25 +223,24 @@ pub fn selection_single_line<F>(start: usize, end: usize, line: &str,
         }
         selections
     } else {
-        let sx = cursor_x_pos(start, line, width_check);
-        let ex = cursor_x_pos(end, line, width_check);
+        let sx = cursor_x_pos(start, lines[0], width_check);
+        let ex = cursor_x_pos(end, lines[0], width_check);
         vec![Rect::new(sx, 0, (ex - sx) as u32, line_height)]
     }
 }
 
 /// Returns the rectangles of the first line of a selection that spans multiple
 /// lines.
-pub fn selection_first_line<F>(start: usize, line: &str, width_check: &F, 
-        wrap_width: Option<u32>, line_width: u32, line_height: u32) 
+pub fn selection_first_line<F>(lines: &Vec<&str>, start: usize, width_check: &F, 
+        line_width: u32, line_height: u32) 
         -> Vec<Rect> 
         where F: Fn(&str) -> u32 {
-    if let Some(wrap_width) = wrap_width {
+    if lines.len() > 1 {
         let mut selections = Vec::new();
-        let lines = wrap_line(line, width_check, wrap_width);
         let (lineno, cx) = cursor_pos(start, &lines, width_check);
         let first = Rect::new(
             cx, (lineno as u32 * line_height) as i32,
-            wrap_width - cx as u32, line_height
+            line_width - cx as u32, line_height
         );
         selections.push(first);
         
@@ -250,44 +248,35 @@ pub fn selection_first_line<F>(start: usize, line: &str, width_check: &F,
         if remaining_lines != 0 {
             let remaining = Rect::new(
                 0, ((lineno as u32 + 1) * line_height) as i32,
-                wrap_width, remaining_lines as u32 * line_height
+                line_width, remaining_lines as u32 * line_height
             );
             selections.push(remaining);
         }
         selections
     } else {
-        let cx = cursor_x_pos(start, line, width_check);
+        let cx = cursor_x_pos(start, lines[0], width_check);
         if cx as u32 >= line_width {
             Vec::new()
         } else {
-            vec![Rect::new(cx, 0, cx as u32 - line_width, line_height)]
+            vec![Rect::new(cx, 0, line_width - cx as u32, line_height)]
         }
     }
 }
 /// Returns the rectangles of a line in the middle of a selection that spans 
 /// multiple lines.
-pub fn selection_middle_line<F>(line: &str, width_check: &F, 
-        wrap_width: Option<u32>, line_width: u32, line_height: u32) 
-        -> Rect 
-        where F: Fn(&str) -> u32 {
-    if let Some(wrap_width) = wrap_width {
-        let linecount = wrap_line(line, width_check, wrap_width).len();
-        let height = (linecount as u32) * line_height;
-        Rect::new(0, 0, line_width, height)
-    } else {
-        Rect::new(0, 0, line_width, line_height)
-    }
+pub fn selection_middle_line(line_count: usize, line_width: u32, line_height: u32) 
+        -> Rect {
+    Rect::new(0, 0, line_width, (line_count as u32) * line_height)
 }
 
 /// Returns the rectangles of the last line of a selection that spans multiple
 /// lines.
-pub fn selection_last_line<F>(end: usize, line: &str, width_check: &F,
-        wrap_width: Option<u32>, line_height: u32) 
+pub fn selection_last_line<F>(lines: &Vec<&str>, end: usize, width_check: &F,
+        line_width: u32, line_height: u32) 
         -> Vec<Rect> 
         where F: Fn(&str) -> u32 {
-    if let Some(wrap_width) = wrap_width {
+    if lines.len() > 1 {
         let mut selections = Vec::new();
-        let lines = wrap_line(line, width_check, wrap_width);
         let (lineno, cx) = cursor_pos(end, &lines, width_check);
         let last = Rect::new(
             0, (lineno as u32 * line_height) as i32,
@@ -298,13 +287,13 @@ pub fn selection_last_line<F>(end: usize, line: &str, width_check: &F,
         if lineno > 0 {
             let remainder = Rect::new(
                 0, 0,
-                wrap_width, lineno as u32 * line_height
+                line_width, lineno as u32 * line_height
             );
             selections.push(remainder);
         }
         selections
     } else {
-        let cx = cursor_x_pos(end, line, width_check);
+        let cx = cursor_x_pos(end, lines[0], width_check);
         let rect = Rect::new(0, 0, cx as u32, line_height);
         vec![rect]
     }

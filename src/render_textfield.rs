@@ -39,29 +39,12 @@ pub struct TextfieldStyle {
 
 /// Creates the surfaces (cpu images) of the given text rendered using the 
 /// given font and optionally wrapped to a given width limit in pixels.
-pub fn line_surfaces<'a>(text: &str, style: &TextStyle, wrap_width: Option<u32>)
-        -> Vec<Surface<'a>> {
-    let mut surfaces = Vec::new();
-    
-    if let Some(width) = wrap_width {
-        for part in wrap_line(text, &|t: &str| style.font.width_of(t), width) {
-            let surface = if let Some(background) = style.background {
-                style.font.render(part).shaded(style.color, background).unwrap()
-            } else {
-                style.font.render(part).blended(style.color).unwrap()
-            };
-            surfaces.push(surface);
-        }
+pub fn line_surface<'a>(line: &str, style: &TextStyle) -> Surface<'a> {
+    if let Some(background) = style.background {
+        style.font.render(line).shaded(style.color, background).unwrap()
     } else {
-        let surface = if let Some(background) = style.background {
-            style.font.render(text).shaded(style.color, background).unwrap()
-        } else {
-            style.font.render(text).blended(style.color).unwrap()
-        };
-        surfaces.push(surface);
-    };
-    
-    surfaces
+        style.font.render(line).blended(style.color).unwrap()
+    }
 }
 
 /// Renders the given text field inside the given rect wrapping text at the
@@ -85,16 +68,22 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
     let height = style.text.font.recommended_line_height();
     let mut visual_lineno = 0;
     let width_check = |t: &str| style.text.font.width_of(t);
+    let width = wrap_width.unwrap_or(rect.width() - style.x_pad * 2);
     
     for (lineno, line) in field.lines.iter().enumerate() {
+        let lines = if let Some(wrap_width) = wrap_width {
+            wrap_line(line, &width_check, wrap_width)
+        } else {
+            vec![line.as_str()]
+        };
         // Selection
         if has_selection {
             // Same line
             if lineno == first.line && lineno == last.line {
                 renderer.set_draw_color(style.selection_color);
                 let y_pos = y + (visual_lineno as u32 * height) as i32;
-                for mut sel in selection_single_line(first.col, last.col, line, 
-                        &width_check, wrap_width, height) {
+                for mut sel in selection_single_line(&lines, first.col, last.col,
+                        &width_check, width, height) {
                     sel.offset(x, y_pos);
                     renderer.fill_rect(sel).expect("Selection fill rect");
                 }
@@ -102,8 +91,8 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
             } else if lineno == first.line {
                 renderer.set_draw_color(style.selection_color);
                 let y_pos = y + (visual_lineno as u32 * height) as i32;
-                for mut sel in selection_first_line(first.col, line, 
-                        &width_check, wrap_width, rect.width(), height) {
+                for mut sel in selection_first_line(&lines, first.col, 
+                        &width_check, width, height) {
                     sel.offset(x, y_pos);
                     renderer.fill_rect(sel).expect("Selection fill rect");
                 }
@@ -111,8 +100,8 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
             } else if lineno == last.line {
                 renderer.set_draw_color(style.selection_color);
                 let y_pos = y + (visual_lineno as u32 * height) as i32;
-                for mut sel in selection_last_line(last.col, line, 
-                        &width_check, wrap_width, height) {
+                for mut sel in selection_last_line(&lines, last.col, 
+                        &width_check, width, height) {
                     sel.offset(x, y_pos);
                     renderer.fill_rect(sel).expect("Selection fill rect");
                 }
@@ -120,13 +109,7 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
             } else if first.line < lineno && lineno < last.line {
                 renderer.set_draw_color(style.selection_color);
                 let y_pos = y + (visual_lineno as u32 * height) as i32;
-                let width = if let Some(width) = wrap_width {
-                    width
-                } else {
-                    rect.width()
-                };
-                let mut sel = selection_middle_line(line, &width_check, 
-                    wrap_width, width, height);
+                let mut sel = selection_middle_line(lines.len(), width, height);
                 sel.offset(x, y_pos);
                 renderer.fill_rect(sel).expect("Selection fill rect");
             }
@@ -155,7 +138,8 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
             visual_lineno += 1;
             continue;
         }
-        for surface in line_surfaces(line, &style.text, wrap_width) {
+        for line in lines {
+            let surface = line_surface(line, &style.text);
             let target = Rect::new(
                 x, y + (visual_lineno as u32 * height) as i32, surface.width(), surface.height()
             );
@@ -210,6 +194,7 @@ pub fn main(field: &mut Textfield) {
     
     renderer.present();
     let mut limiter = glorious::FrameLimiter::new(30);
+    let mut dirty = true;
     
     'mainloop: loop {
         for event in context.event_pump().unwrap().poll_iter() {
@@ -223,24 +208,31 @@ pub fn main(field: &mut Textfield) {
                         match keycode {
                             Some(Keycode::Left) => {
                                 field.left();
+                                dirty = true;
                             },
                             Some(Keycode::Right) => {
                                 field.right();
+                                dirty = true;
                             },
                             Some(Keycode::Up) => {
                                 field.up();
+                                dirty = true;
                             },
                             Some(Keycode::Down) => {
                                 field.down();
+                                dirty = true;
                             },
                             Some(Keycode::Backspace) => {
                                 field.delete_previous();
+                                dirty = true;
                             },
                             Some(Keycode::Delete) => {
                                 field.delete_next();
+                                dirty = true;
                             },
                             Some(Keycode::Return) => {
                                 field.insert("\n");
+                                dirty = true;
                             }
                             other => {
                                 println!("Key down: {:?}", other);
@@ -250,15 +242,19 @@ pub fn main(field: &mut Textfield) {
                         match keycode {
                             Some(Keycode::Left) => {
                                 field.select_left();
+                                dirty = true;
                             },
                             Some(Keycode::Right) => {
                                 field.select_right();
+                                dirty = true;
                             },
                             Some(Keycode::Up) => {
                                 field.select_up();
+                                dirty = true;
                             },
                             Some(Keycode::Down) => {
                                 field.select_down();
+                                dirty = true;
                             },
                             _ => {},
                         }
@@ -288,20 +284,37 @@ pub fn main(field: &mut Textfield) {
                 Event::TextInput { text, ..} => {
                     println!("Inserting text {:?}", &text);
                     field.insert(&text);
+                    dirty = true;
                 }
                 _ => {}
             }
         }
         
+        /* Performance stuff
+        CPU usage:
+            Non-wrapped: 8.5%
+            Wrapped: 11.5% 
+                No selection: 11.1
+                Full selection: 13
+                No text: 2
+        
+        Scales linearly with more text:
+        When I fill the window with short lines it becomes 18%
+        */
+        
         // Render
-        renderer.set_draw_color(clear_color);
-        renderer.clear();
         let rect = Rect::new(64, 64, SCREEN_WIDTH - 128,
             SCREEN_HEIGHT - 128);
-        //old_render_textfield(field, rect, &style, &mut renderer);
-        // 4% cpu at 30 FPS when in debug mode
-        render_textfield(field, rect, &style, &mut renderer, Some(200));
-        renderer.present();
+
+        let wrap_width = Some(200);
+        // Dirty check not used atm to better improve general performance
+        if true { // dirty.
+            renderer.set_draw_color(clear_color);
+            renderer.clear();
+            render_textfield(field, rect, &style, &mut renderer, wrap_width);
+            renderer.present();
+            dirty = false;
+        }
         
         limiter.limit();
     }

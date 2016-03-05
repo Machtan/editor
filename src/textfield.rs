@@ -3,6 +3,7 @@ use cursor::Cursor;
 use common::StringSliceExt;
 
 /// A field of text
+#[derive(Debug, Clone)]
 pub struct Textfield {
     pub lines: Vec<String>,
     pub cursor: Cursor,
