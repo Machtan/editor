@@ -4,6 +4,7 @@ extern crate glorious;
 
 use std::rc::Rc;
 use std::path::Path;
+use std::collections::HashMap;
 use sdl2::event::Event;
 use sdl2::keyboard::{LSHIFTMOD, RSHIFTMOD, LGUIMOD, RGUIMOD};
 use sdl2::keyboard::Keycode;
@@ -47,11 +48,33 @@ pub fn line_surface<'a>(line: &str, style: &TextStyle) -> Surface<'a> {
     }
 }
 
+const ASCII_CHARS: [char; 95] = [
+    ' ', '!', '"', '#', '$', '%', '&', '\'', '(', ')', '*', '+', ',', '-', '.',
+    '/', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':', ';', '<', '=',
+    '>', '?', '@', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
+    'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '[',
+    '\\', ']', '^', '_', '`', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
+    'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y',
+    'z', '{', '|', '}', '~',
+];
+fn max_ascii_char_width(font: Rc<Font>) -> u32 {
+    let mut max = 0;
+    for &ch in ASCII_CHARS.iter() {
+        let (width, _) = font.size_of_char(ch)
+            .expect("Could not size ascii char");
+        if width > max {
+            max = width;
+        }
+    }
+    max
+}
+
 /// Renders the given text field inside the given rect wrapping text at the
-/// given wrap_width
-pub fn render_textfield(field: &Textfield, rect: Rect,
+/// given wrap_width.
+pub fn render_textfield<'a>(field: &Textfield, rect: Rect,
         style: &TextfieldStyle, renderer: &mut Renderer, 
-        wrap_width: Option<u32>) {
+        wrap_width: Option<u32>, max_char_width: Option<u32>,
+        line_cache: &mut HashMap<&str, Surface<'a>>) {
     
     renderer.set_clip_rect(Some(rect));
     
@@ -67,12 +90,27 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
     let y = rect.y() + style.y_pad as i32;
     let height = style.text.font.recommended_line_height();
     let mut visual_lineno = 0;
-    let width_check = |t: &str| style.text.font.width_of(t);
+    // Use a heuristic to skip the glyph size check
+    let should_wrap = |t: &str| {
+        if let Some(width) = max_char_width {
+            if t.len() as u32 * width <= wrap_width.unwrap() {
+                false
+            } else {
+                style.text.font.width_of(t) > wrap_width.unwrap()
+            }
+        } else {
+            style.text.font.width_of(t) > wrap_width.unwrap()
+        }
+    };
+    let width_check = |t: &str| {
+        style.text.font.width_of(t)
+    };
     let width = wrap_width.unwrap_or(rect.width() - style.x_pad * 2);
     
     for (lineno, line) in field.lines.iter().enumerate() {
+        let y_pos = y + (visual_lineno as u32 * height) as i32;
         let lines = if let Some(wrap_width) = wrap_width {
-            wrap_line(line, &width_check, wrap_width)
+            wrap_line(line, &should_wrap)
         } else {
             vec![line.as_str()]
         };
@@ -81,7 +119,6 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
             // Same line
             if lineno == first.line && lineno == last.line {
                 renderer.set_draw_color(style.selection_color);
-                let y_pos = y + (visual_lineno as u32 * height) as i32;
                 for mut sel in selection_single_line(&lines, first.col, last.col,
                         &width_check, width, height) {
                     sel.offset(x, y_pos);
@@ -90,7 +127,6 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
             // First line
             } else if lineno == first.line {
                 renderer.set_draw_color(style.selection_color);
-                let y_pos = y + (visual_lineno as u32 * height) as i32;
                 for mut sel in selection_first_line(&lines, first.col, 
                         &width_check, width, height) {
                     sel.offset(x, y_pos);
@@ -99,7 +135,6 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
             // Last line
             } else if lineno == last.line {
                 renderer.set_draw_color(style.selection_color);
-                let y_pos = y + (visual_lineno as u32 * height) as i32;
                 for mut sel in selection_last_line(&lines, last.col, 
                         &width_check, width, height) {
                     sel.offset(x, y_pos);
@@ -108,7 +143,6 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
             // Middle line
             } else if first.line < lineno && lineno < last.line {
                 renderer.set_draw_color(style.selection_color);
-                let y_pos = y + (visual_lineno as u32 * height) as i32;
                 let mut sel = selection_middle_line(lines.len(), width, height);
                 sel.offset(x, y_pos);
                 renderer.fill_rect(sel).expect("Selection fill rect");
@@ -116,9 +150,7 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
         
         // Cursor
         } else if lineno == first.line {
-            let y_pos = y + (visual_lineno as u32 * height) as i32;
             let (cx, cy) = if let Some(wrap_width) = wrap_width {
-                let lines = wrap_line(line, &width_check, wrap_width);
                 let (cl, cx) = cursor_pos(first.col, &lines, &width_check);
                 (x + cx, y_pos + (cl as u32 * height) as i32)
             } else {
@@ -134,20 +166,21 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
         
         
         // Text
-        if line.is_empty() {
-            visual_lineno += 1;
-            continue;
-        }
-        for line in lines {
+        let line_count = lines.len();
+        for (i, line) in lines.into_iter().enumerate() {
+            if line.is_empty() {
+                continue;
+            }
             let surface = line_surface(line, &style.text);
             let target = Rect::new(
-                x, y + (visual_lineno as u32 * height) as i32, surface.width(), surface.height()
+                x, y_pos + (i as u32 * height) as i32, 
+                surface.width(), surface.height()
             );
             let mut texture = renderer.create_texture_from_surface(&surface)
                 .expect("Could not create text texture");
             renderer.copy(&mut texture, None, Some(target));
-            visual_lineno += 1;
         }
+        visual_lineno += line_count;
     }
     
     renderer.set_clip_rect(None);
@@ -195,6 +228,8 @@ pub fn main(field: &mut Textfield) {
     renderer.present();
     let mut limiter = glorious::FrameLimiter::new(30);
     let mut dirty = true;
+    let mut line_cache = HashMap::new();
+    let max_char_width = max_ascii_char_width(style.text.font.clone());
     
     'mainloop: loop {
         for event in context.event_pump().unwrap().poll_iter() {
@@ -294,9 +329,11 @@ pub fn main(field: &mut Textfield) {
         CPU usage:
             Non-wrapped: 8.5%
             Wrapped: 11.5% 
-                No selection: 11.1
+                No selection render: 11.1
                 Full selection: 13
                 No text: 2
+                No text render: 6
+                
         
         Scales linearly with more text:
         When I fill the window with short lines it becomes 18%
@@ -311,7 +348,8 @@ pub fn main(field: &mut Textfield) {
         if true { // dirty.
             renderer.set_draw_color(clear_color);
             renderer.clear();
-            render_textfield(field, rect, &style, &mut renderer, wrap_width);
+            render_textfield(field, rect, &style, &mut renderer, wrap_width, 
+                Some(max_char_width), &mut line_cache);
             renderer.present();
             dirty = false;
         }

@@ -66,16 +66,16 @@ pub fn cursor_pos<F>(col: usize, lines: &Vec<&str>, width_check: &F)
 }
 
 /// Wraps a single (loooong) word to fit within the given line width.
-pub fn wrap_word<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
+pub fn wrap_word<'a, F>(line: &'a str, should_wrap: &F)
         -> Vec<&'a str> 
-        where F: Fn(&str) -> u32 {
+        where F: Fn(&str) -> bool {
     let mut lines = Vec::new();
     let mut start = 0;
     let mut last_index = 0;
     let mut indices: Vec<_> = line.char_indices().skip(1).map(|(i, _)| i).collect();
     indices.push(line.len());
     for next_index in indices {
-        if width_check(&line[start..next_index]) > wrap_width {
+        if should_wrap(&line[start..next_index]) {
             let part = &line[start..last_index];
             if part != "" {
                 //println!("--- '{}'", part);
@@ -94,12 +94,11 @@ pub fn wrap_word<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
 
 /// Splits the given text into lines of text fitting the given wrap width when
 /// using the given width checking function.
-pub fn wrap_line<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
+pub fn wrap_line<'a, F>(line: &'a str, should_wrap: &F)
         -> Vec<&'a str> 
-        where F: Fn(&str) -> u32 {
-    if width_check(line) <= wrap_width {
+        where F: Fn(&str) -> bool {
+    if ! should_wrap(line) {
         vec![line]
-    
     } else {
         let mut lines = Vec::new();
         
@@ -133,11 +132,11 @@ pub fn wrap_line<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
             } else {
                 if was_whitespace { // New word begins
                     
-                    if width_check(&line[start..cur_word_end]) > wrap_width {
+                    if should_wrap(&line[start..cur_word_end]) {
                         if start == last_word_begin { // Single word read
                             let part = &line[start..cur_word_begin];
                             //println!("- '{}'", part);
-                            lines.append(&mut wrap_word(part, width_check, wrap_width));
+                            lines.append(&mut wrap_word(part, should_wrap));
                             start = cur_word_begin;
                         } else { // Two or more words read
                             let part = &line[start..last_word_begin];
@@ -160,11 +159,11 @@ pub fn wrap_line<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
             cur_word_begin = line.len();
         }
         
-        if width_check(&line[start..cur_word_end]) > wrap_width {
+        if should_wrap(&line[start..cur_word_end]) {
             if start == last_word_begin {
                 let part = &line[start..cur_word_begin];
                 //println!("- '{}'", part);
-                lines.append(&mut wrap_word(part, width_check, wrap_width));
+                lines.append(&mut wrap_word(part, should_wrap));
             } else {
                 let part = &line[start..last_word_begin];
                 //println!("- '{}'", part);
@@ -207,7 +206,7 @@ pub fn selection_single_line<F>(lines: &Vec<&str>, start: usize, end: usize,
                 line_width - sx as u32, line_height
             );
             selections.push(first);
-            let middle_lines = sl - el - 1;
+            let middle_lines = el - sl - 1;
             if middle_lines != 0 {
                 let middle = Rect::new(
                     0, line_height as i32, 
