@@ -74,7 +74,8 @@ fn max_ascii_char_width(font: Rc<Font>) -> u32 {
 pub fn render_textfield<'a>(field: &Textfield, rect: Rect,
         style: &TextfieldStyle, renderer: &mut Renderer, 
         wrap_width: Option<u32>, max_char_width: Option<u32>,
-        line_cache: &mut HashMap<String, Texture>) {
+        text_cache: &mut HashMap<String, Texture>, 
+        wrap_cache: &mut HashMap<String, Vec<usize>>) {
     
     renderer.set_clip_rect(Some(rect));
     
@@ -171,7 +172,7 @@ pub fn render_textfield<'a>(field: &Textfield, rect: Rect,
             if line.is_empty() {
                 continue;
             }
-            let mut texture = line_cache.entry(String::from(line)).or_insert_with(|| {
+            let mut texture = text_cache.entry(String::from(line)).or_insert_with(|| {
                 let surface = line_surface(line, &style.text);
                 renderer.create_texture_from_surface(surface)
                     .expect("Could not create text texture")
@@ -232,7 +233,8 @@ pub fn main(field: &mut Textfield) {
     renderer.present();
     let mut limiter = glorious::FrameLimiter::new(30);
     let mut dirty = true;
-    let mut line_cache = HashMap::new();
+    let mut text_cache = HashMap::new();
+    let mut wrap_cache = HashMap::new();
     let max_char_width = max_ascii_char_width(style.text.font.clone());
     
     'mainloop: loop {
@@ -353,7 +355,7 @@ pub fn main(field: &mut Textfield) {
             renderer.set_draw_color(clear_color);
             renderer.clear();
             render_textfield(field, rect, &style, &mut renderer, wrap_width, 
-                Some(max_char_width), &mut line_cache);
+                Some(max_char_width), &mut text_cache, &mut wrap_cache);
             renderer.present();
             dirty = false;
         }

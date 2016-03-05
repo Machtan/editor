@@ -72,9 +72,8 @@ pub fn wrap_word<'a, F>(line: &'a str, should_wrap: &F)
     let mut lines = Vec::new();
     let mut start = 0;
     let mut last_index = 0;
-    let mut indices: Vec<_> = line.char_indices().skip(1).map(|(i, _)| i).collect();
-    indices.push(line.len());
-    for next_index in indices {
+    for (cur_index, ch) in line.char_indices() {
+        let next_index = cur_index + ch.len_utf8();
         if should_wrap(&line[start..next_index]) {
             let part = &line[start..last_index];
             if part != "" {
@@ -109,19 +108,8 @@ pub fn wrap_line<'a, F>(line: &'a str, should_wrap: &F)
         
         let mut was_whitespace = false;
         
-        // Create indices of each character and each next index. 
-        // (where the character ends, instead of where it begins)
-        let indices = {
-            let mut result = Vec::new();
-            let mut indices: Vec<_> = line.char_indices().skip(1).map(|(i, _)| i).collect();
-            indices.push(line.len());
-            for (i, ch) in line.chars().enumerate() {
-                result.push((indices[i], ch));
-            }
-            result
-        };
-        
-        for &(next_index, ch) in indices.iter() {
+        for (cur_index, ch) in line.char_indices() {
+            let next_index = cur_index + ch.len_utf8();
             if ch.is_whitespace() {
                 if ! was_whitespace { // New spacing begins
                     last_word_begin = cur_word_begin;
