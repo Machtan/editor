@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use sdl2::event::Event;
 use sdl2::keyboard::{LSHIFTMOD, RSHIFTMOD, LGUIMOD, RGUIMOD};
 use sdl2::keyboard::Keycode;
-use sdl2::render::Renderer;
+use sdl2::render::{Renderer, Texture, TextureQuery};
 use sdl2::rect::{Rect, Point};
 use sdl2::pixels::Color;
 use sdl2_ttf::Font;
@@ -74,7 +74,7 @@ fn max_ascii_char_width(font: Rc<Font>) -> u32 {
 pub fn render_textfield<'a>(field: &Textfield, rect: Rect,
         style: &TextfieldStyle, renderer: &mut Renderer, 
         wrap_width: Option<u32>, max_char_width: Option<u32>,
-        line_cache: &mut HashMap<&str, Surface<'a>>) {
+        line_cache: &mut HashMap<String, Texture>) {
     
     renderer.set_clip_rect(Some(rect));
     
@@ -171,13 +171,17 @@ pub fn render_textfield<'a>(field: &Textfield, rect: Rect,
             if line.is_empty() {
                 continue;
             }
-            let surface = line_surface(line, &style.text);
+            let mut texture = line_cache.entry(String::from(line)).or_insert_with(|| {
+                let surface = line_surface(line, &style.text);
+                renderer.create_texture_from_surface(surface)
+                    .expect("Could not create text texture")
+            });
+            let TextureQuery { width: w, height: h, ..} = texture.query();
             let target = Rect::new(
                 x, y_pos + (i as u32 * height) as i32, 
-                surface.width(), surface.height()
+                w, h
             );
-            let mut texture = renderer.create_texture_from_surface(&surface)
-                .expect("Could not create text texture");
+            
             renderer.copy(&mut texture, None, Some(target));
         }
         visual_lineno += line_count;
