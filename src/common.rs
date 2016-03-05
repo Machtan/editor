@@ -2,8 +2,6 @@
 extern crate sdl2;
 extern crate sdl2_ttf;
 
-use std::rc::Rc;
-use sdl2::pixels::Color;
 use sdl2_ttf::Font;
 
 

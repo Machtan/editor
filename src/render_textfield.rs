@@ -13,10 +13,10 @@ use sdl2::pixels::Color;
 use sdl2_ttf::Font;
 use sdl2::surface::Surface;
 
-use cursor::Cursor;
 use textfield::Textfield;
 use common::WidthOfExt;
-use layout::{cursor_x_pos, cursor_pos, wrap_line, selections};
+use layout::{cursor_x_pos, cursor_pos, wrap_line};
+use layout::{selection_single_line, selection_first_line, selection_middle_line, selection_last_line};
 
 #[derive(Clone)]
 pub struct TextStyle {
@@ -71,7 +71,6 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
         wrap_width: Option<u32>) {
     
     renderer.set_clip_rect(Some(rect));
-    let font = style.text.font.clone();
     
     if let Some(color) = style.background {
         renderer.set_draw_color(color);
@@ -85,24 +84,67 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
     let y = rect.y() + style.y_pad as i32;
     let height = style.text.font.recommended_line_height();
     let mut visual_lineno = 0;
+    let width_check = |t: &str| style.text.font.width_of(t);
+    
     for (lineno, line) in field.lines.iter().enumerate() {
         // Selection
         if has_selection {
-            if visual_lineno >= first.line && visual_lineno <= last.line {
+            // Same line
+            if lineno == first.line && lineno == last.line {
                 renderer.set_draw_color(style.selection_color);
-                //println!("Selections:");
-                for mut rect in selections(first, last, visual_lineno, line, 
-                    &|t: &str| font.width_of(t), wrap_width, rect.width(), height
-                ) {
-                    //println!("- {:?}", rect);
-                    rect.offset(x, y + (visual_lineno as u32 * height) as i32);
-                    renderer.fill_rect(rect).expect("Could not draw selection");
+                let y_pos = y + (visual_lineno as u32 * height) as i32;
+                for mut sel in selection_single_line(first.col, last.col, line, 
+                        &width_check, wrap_width, height) {
+                    sel.offset(x, y_pos);
+                    renderer.fill_rect(sel).expect("Selection fill rect");
                 }
+            // First line
+            } else if lineno == first.line {
+                renderer.set_draw_color(style.selection_color);
+                let y_pos = y + (visual_lineno as u32 * height) as i32;
+                for mut sel in selection_first_line(first.col, line, 
+                        &width_check, wrap_width, rect.width(), height) {
+                    sel.offset(x, y_pos);
+                    renderer.fill_rect(sel).expect("Selection fill rect");
+                }
+            // Last line
+            } else if lineno == last.line {
+                renderer.set_draw_color(style.selection_color);
+                let y_pos = y + (visual_lineno as u32 * height) as i32;
+                for mut sel in selection_last_line(last.col, line, 
+                        &width_check, wrap_width, height) {
+                    sel.offset(x, y_pos);
+                    renderer.fill_rect(sel).expect("Selection fill rect");
+                }
+            // Middle line
+            } else if first.line < lineno && lineno < last.line {
+                renderer.set_draw_color(style.selection_color);
+                let y_pos = y + (visual_lineno as u32 * height) as i32;
+                let width = if let Some(width) = wrap_width {
+                    width
+                } else {
+                    rect.width()
+                };
+                let mut sel = selection_middle_line(line, &width_check, 
+                    wrap_width, width, height);
+                sel.offset(x, y_pos);
+                renderer.fill_rect(sel).expect("Selection fill rect");
             }
+        
+        // Cursor
         } else if lineno == first.line {
-            let (cvisual_lineno, cx) = cursor_pos(first.col, line, &|t: &str| font.width_of(t), wrap_width);
-            let start = Point::new(x + cx, y + ((visual_lineno + cvisual_lineno) as u32 * height) as i32);
-            let end = Point::new(x + cx, y + ((visual_lineno + cvisual_lineno + 1) as u32 * height) as i32);
+            let y_pos = y + (visual_lineno as u32 * height) as i32;
+            let (cx, cy) = if let Some(wrap_width) = wrap_width {
+                let lines = wrap_line(line, &width_check, wrap_width);
+                let (cl, cx) = cursor_pos(first.col, &lines, &width_check);
+                (x + cx, y_pos + (cl as u32 * height) as i32)
+            } else {
+                let cx = cursor_x_pos(first.col, line, &width_check);
+                (x + cx, y_pos)
+            };
+            
+            let start = Point::new(cx, cy);
+            let end = Point::new(cx, cy + height as i32);
             renderer.set_draw_color(style.cursor_color);
             renderer.draw_line(start, end).expect("Could not draw cursor");
         }
@@ -122,106 +164,6 @@ pub fn render_textfield(field: &Textfield, rect: Rect,
             renderer.copy(&mut texture, None, Some(target));
             visual_lineno += 1;
         }
-    }
-    
-    renderer.set_clip_rect(None);
-}
-
-pub fn old_render_textfield(field: &Textfield, rect: Rect,
-        style: &TextfieldStyle, renderer: &mut Renderer) {
-    
-    renderer.set_clip_rect(Some(rect));
-    renderer.set_draw_color(Color::RGBA(220, 220, 255, 255));
-    renderer.clear();
-    
-    let line_height = style.text.font.recommended_line_height();
-    
-    // Find the selection
-    let (first, last) = field.cursor.order(&field.selection_marker);
-        
-    let x = rect.x() + style.x_pad as i32;
-    let font_height = style.text.font.height() as i32;
-    
-    // Prepare selections
-    renderer.set_draw_color(style.selection_color);
-    for (lineno, line) in field.lines.iter().enumerate() {
-        let y_pos = rect.y() + style.y_pad as i32 + (lineno as i32 * line_height as i32);
-        if field.has_selection() {
-            // First line
-            if lineno == first.line {
-                // Single-line selection
-                if last.line == first.line { 
-                    let x_left = x + cursor_x_pos(
-                        first.col, line, &|t: &str| style.text.font.width_of(t)
-                    ) as i32;
-                    let x_right = x + cursor_x_pos(
-                        last.col, line, &|t: &str| style.text.font.width_of(t)
-                    ) as i32;
-                    let width = (x_right - x_left) as u32;
-                    let rect = Rect::new(
-                        x_left, y_pos, width, line_height as u32
-                    );
-                    renderer.fill_rect(rect);
-
-                // Multi-line selection
-                } else { 
-                    let offset = cursor_x_pos(
-                        first.col, line, &|t: &str| style.text.font.width_of(t)
-                    );
-                    let rect = Rect::new(
-                        x + offset as i32, y_pos, rect.width() - offset as u32,
-                        line_height as u32
-                    );
-                    renderer.fill_rect(rect);
-                }
-            // Intermediate line
-            } else if (first.line < lineno) && (lineno < last.line) {
-                let rect = Rect::new(x, y_pos, rect.width(),
-                    line_height as u32);
-                renderer.fill_rect(rect);
-        
-            // Final line
-            } else if lineno == last.line {
-                let offset = cursor_x_pos(
-                    last.col, line, &|t: &str| style.text.font.width_of(t)
-                );
-                if offset != 0 {
-                    let rect = Rect::new(
-                        x, y_pos, offset as u32, line_height as u32
-                    );
-                    renderer.fill_rect(rect);
-                }
-            }
-        
-        // Normal cursor
-        } else if lineno == first.line {
-            let x_pos = x + cursor_x_pos(
-                field.cons_cursor().col, line, &|t: &str| style.text.font.width_of(t)
-            ) as i32;
-            renderer.set_draw_color(style.cursor_color);
-            renderer.draw_line(
-                Point::new(x_pos, y_pos),
-                Point::new(x_pos, y_pos + line_height as i32)
-            );
-        }
-    }
-    
-    // Prepare lines
-    let mut y_pos = rect.y() + style.y_pad as i32;
-    for (lineno, line) in field.lines.iter().enumerate() {
-        if line.is_empty() {
-            y_pos += line_height as i32;
-            continue;
-        }
-        renderer.set_draw_color(style.text.color);
-        let surface = style.text.font.render(line).blended(style.text.color).unwrap();
-        let mut texture = renderer.create_texture_from_surface(&surface)
-            .unwrap();
-        let (width, height) = style.text.font.size_of(line).unwrap();
-        let target = Rect::new(x, y_pos, width, height);
-        
-        renderer.copy(&texture, None, Some(target));
-        y_pos += line_height as i32;        
     }
     
     renderer.set_clip_rect(None);
@@ -251,16 +193,11 @@ pub fn main(field: &mut Textfield) {
     let red = Color::RGBA(255, 0, 0, 255);
     let white = Color::RGBA(255, 255, 255, 255);
     let black = Color::RGBA(0, 0, 0, 255);
-    let text = "Hello Rust!";
-    let surface = font.render(text).blended(red).unwrap();
-    let mut texture = renderer.create_texture_from_surface(&surface).unwrap();
-    let (width, height) = font.size_of(text).unwrap();
     
-    renderer.set_draw_color(white);
+    let clear_color = white;
+    renderer.set_draw_color(clear_color);
     renderer.clear();
     
-    let pad = 64;
-    let target = Rect::new(pad, pad, width, height);
     let text_style = TextStyle {
         font: Rc::new(font), color: black, background: None,
     };
@@ -271,7 +208,6 @@ pub fn main(field: &mut Textfield) {
         background: Some(Color::RGBA(220, 220, 255, 255)),
     };
     
-    renderer.copy(&mut texture, None, Some(target));
     renderer.present();
     let mut limiter = glorious::FrameLimiter::new(30);
     
@@ -358,7 +294,7 @@ pub fn main(field: &mut Textfield) {
         }
         
         // Render
-        renderer.set_draw_color(white);
+        renderer.set_draw_color(clear_color);
         renderer.clear();
         let rect = Rect::new(64, 64, SCREEN_WIDTH - 128,
             SCREEN_HEIGHT - 128);

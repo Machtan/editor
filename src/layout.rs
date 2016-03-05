@@ -2,11 +2,7 @@
 extern crate sdl2;
 extern crate sdl2_ttf;
 
-use cursor::Cursor;
-use std::rc::Rc;
 use sdl2::rect::Rect;
-use sdl2_ttf::Font;
-use common::WidthOfExt;
 
 /// Find out at which x coordinate to render a cursor in the given line of text.
 pub fn cursor_x_pos<F>(col: usize, line: &str, width_check: &F)
@@ -18,7 +14,7 @@ pub fn cursor_x_pos<F>(col: usize, line: &str, width_check: &F)
         width_check(line) as i32
     } else {
         let boundary: Vec<_> = line.char_indices().skip(col-1).take(2).collect();
-        let (left_index, left_char) = boundary[0];
+        let (_, left_char) = boundary[0];
         let (right_index, right_char) = boundary[1];
         let mut left_char_string = String::new();
         left_char_string.push(left_char);
@@ -46,16 +42,15 @@ pub fn cursor_x_pos<F>(col: usize, line: &str, width_check: &F)
 /// Find out where to render a cursor in the given line of text.
 /// Returns a line number and the x position of the cursor in it.
 /// The line number is only relevant when the text is being wrapped.
-pub fn cursor_pos<F>(col: usize, line: &str, width_check: &F, wrap_width: Option<u32>)
+pub fn cursor_pos<F>(col: usize, lines: &Vec<&str>, width_check: &F)
         -> (usize, i32) 
         where F: Fn(&str) -> u32 {
     if col == 0 {
         return (0, 0);
-    } else if let Some(ww) = wrap_width {
+    } else if lines.len() > 1 {
         let mut col_remainder = col;
-        let lines = wrap_line(line, width_check, ww);
         let last = lines.len() - 1;
-        for (i, line) in lines.into_iter().enumerate() {
+        for (i, line) in lines.iter().enumerate() {
             if col_remainder < line.chars().count() || i == last {
                 let x = cursor_x_pos(col_remainder, line, width_check);
                 return (i, x);
@@ -65,7 +60,7 @@ pub fn cursor_pos<F>(col: usize, line: &str, width_check: &F, wrap_width: Option
         }
         unreachable!();
     } else {
-        let x = cursor_x_pos(col, line, width_check);
+        let x = cursor_x_pos(col, lines[0], width_check);
         return (0, x);
     }
 }
@@ -77,7 +72,7 @@ pub fn wrap_word<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
     let mut lines = Vec::new();
     let mut start = 0;
     let mut last_index = 0;
-    let mut indices: Vec<_> = line.char_indices().skip(1).map(|(i, c)| i).collect();
+    let mut indices: Vec<_> = line.char_indices().skip(1).map(|(i, _)| i).collect();
     indices.push(line.len());
     for next_index in indices {
         if width_check(&line[start..next_index]) > wrap_width {
@@ -114,13 +109,12 @@ pub fn wrap_line<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
         let mut last_word_begin = 0;
         
         let mut was_whitespace = false;
-        let mut words_read = 0; // When single words are too long to fit in a line
         
         // Create indices of each character and each next index. 
         // (where the character ends, instead of where it begins)
         let indices = {
             let mut result = Vec::new();
-            let mut indices: Vec<_> = line.char_indices().skip(1).map(|(i, c)| i).collect();
+            let mut indices: Vec<_> = line.char_indices().skip(1).map(|(i, _)| i).collect();
             indices.push(line.len());
             for (i, ch) in line.chars().enumerate() {
                 result.push((indices[i], ch));
@@ -128,7 +122,7 @@ pub fn wrap_line<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
             result
         };
         
-        for (chi, &(next_index, ch)) in indices.iter().enumerate() {
+        for &(next_index, ch) in indices.iter() {
             if ch.is_whitespace() {
                 if ! was_whitespace { // New spacing begins
                     last_word_begin = cur_word_begin;
@@ -171,7 +165,6 @@ pub fn wrap_line<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
                 let part = &line[start..cur_word_begin];
                 //println!("- '{}'", part);
                 lines.append(&mut wrap_word(part, width_check, wrap_width));
-                start = cur_word_begin;
             } else {
                 let part = &line[start..last_word_begin];
                 //println!("- '{}'", part);
@@ -182,107 +175,139 @@ pub fn wrap_line<'a, F>(line: &'a str, width_check: &F, wrap_width: u32)
                     let part = &line[start..cur_word_begin];
                     //println!("- '{}'", part);
                     lines.push(part);
-                    start = cur_word_begin;
                 }
             }
         } else {
             let part = &line[start..];
             //println!("- '{}'", part);
             lines.push(part);
-            start = cur_word_begin;
         }
         lines
     }
 }
 
-/// Returns the selection rectangles for the given line and cursors.
-pub fn selections<F>(first: Cursor, last: Cursor, lineno: usize, line: &str, 
-        width_check: &F, wrap_width: Option<u32>, width: u32, line_height: u32) 
+/// Returns the rectangles of a selection which starts and ends on the same line.
+pub fn selection_single_line<F>(start: usize, end: usize, line: &str,
+        width_check: &F, wrap_width: Option<u32>, line_height: u32) 
         -> Vec<Rect> 
         where F: Fn(&str) -> u32 {
-    let mut selections = Vec::new();
-    
-    // Full selected line
-    if first.line < lineno && lineno < last.line {
-        let count = if let Some(ww) = wrap_width {
-            wrap_line(line, width_check, ww).len()
-        } else {
-            1
-        };
-        for i in 0 .. count {
-            let full_line = Rect::new(
-                0, (i as u32 * line_height) as i32, 
-                wrap_width.unwrap_or(width), line_height
+    if let Some(wrap_width) = wrap_width {
+        let mut selections = Vec::new();
+        let lines = wrap_line(line, width_check, wrap_width);
+        let (sl, sx) = cursor_pos(start, &lines, width_check);
+        let (el, ex) = cursor_pos(end, &lines, width_check);
+        if sl == el {
+            let rect = Rect::new(
+                sx, (sl as u32 * line_height) as i32, 
+                (ex - sx) as u32, line_height
             );
-            selections.push(full_line);
-        }
-    // Selection starts here 
-    } else if lineno == first.line {
-        // And ends on the same line of text
-        if last.line == lineno {
-            println!("Selection start and end at {}", lineno);
-            let (first_lineno, fx) = cursor_pos(first.col, line, width_check, wrap_width);
-            let (last_lineno, lx) = cursor_pos(last.col, line, width_check, wrap_width);
-            if last_lineno == first_lineno {
-                let rect = Rect::new(
-                    fx, (first_lineno as u32 * line_height) as i32, 
-                    (lx - fx) as u32, line_height
-                );
-                selections.push(rect);
-            } else {
-                let first = Rect::new(
-                    fx, (first_lineno as u32 * line_height) as i32,
-                    width - fx as u32, line_height 
-                );
-                selections.push(first);
-                for i in 0 .. (last_lineno - (first_lineno + 1)) {
-                    let middle = Rect::new(
-                        0, ((first_lineno + 1) as u32 * line_height) as i32,
-                        wrap_width.unwrap(), line_height
-                    );
-                    selections.push(middle)
-                }
-                let last = Rect::new(
-                    0, (last_lineno as u32 * line_height) as i32,
-                    lx as u32, line_height
-                );
-                selections.push(last);
-            }
+            selections.push(rect);
         } else {
-            println!("Selection start at {}", lineno);
-            if let Some(ww) = wrap_width {
-                let last_line = wrap_line(line, width_check, ww).len() - 1;
-                let (lineno, x) = cursor_pos(first.col, line, width_check, wrap_width);
-                let start = Rect::new(x, (lineno as u32 * line_height) as i32, ww - x as u32, line_height);
-                selections.push(start);
-                println!("Start: {:?}", start);
-                if lineno < last_line {
-                    let rest = Rect::new(
-                        0, start.bottom(), 
-                        ww, (last_line - lineno) as u32 * line_height
-                    );
-                    selections.push(rest);
-                    println!("Rest: {:?}", rest);
-                }
-            } else {
-                let (_, x) = cursor_pos(first.col, line, width_check, wrap_width);
-                selections.push(Rect::new(x, 0, width - x as u32, line_height));
+            let first = Rect::new(
+                sx, (sl as u32 * line_height) as i32, 
+                wrap_width - sx as u32, line_height
+            );
+            selections.push(first);
+            let middle_lines = sl - el - 1;
+            if middle_lines != 0 {
+                let middle = Rect::new(
+                    0, line_height as i32, 
+                    wrap_width, middle_lines as u32 * line_height
+                );
+                selections.push(middle);
             }
+            let last = Rect::new(
+                0, ((1 + middle_lines) as u32 * line_height) as i32, 
+                ex as u32, line_height
+            );
+            selections.push(last);
         }
-    // Selection ends here
-    } else if lineno == last.line {
-        println!("Selection end at {}", lineno);
-        let (lineno, x) = cursor_pos(last.col, line, width_check, wrap_width);
-        if lineno != 0 {
-            let pre = Rect::new(0, 0, wrap_width.unwrap(), lineno as u32 * line_height);
-            selections.push(pre);
-            println!("Pre: {:?}", pre);
-        }
-        let last = Rect::new(0, 0, x as u32, line_height);
-        selections.push(last);
-        println!("Last: {:?}", last);
+        selections
+    } else {
+        let sx = cursor_x_pos(start, line, width_check);
+        let ex = cursor_x_pos(end, line, width_check);
+        vec![Rect::new(sx, 0, (ex - sx) as u32, line_height)]
     }
-    selections
+}
+
+/// Returns the rectangles of the first line of a selection that spans multiple
+/// lines.
+pub fn selection_first_line<F>(start: usize, line: &str, width_check: &F, 
+        wrap_width: Option<u32>, line_width: u32, line_height: u32) 
+        -> Vec<Rect> 
+        where F: Fn(&str) -> u32 {
+    if let Some(wrap_width) = wrap_width {
+        let mut selections = Vec::new();
+        let lines = wrap_line(line, width_check, wrap_width);
+        let (lineno, cx) = cursor_pos(start, &lines, width_check);
+        let first = Rect::new(
+            cx, (lineno as u32 * line_height) as i32,
+            wrap_width - cx as u32, line_height
+        );
+        selections.push(first);
+        
+        let remaining_lines = (lines.len() - 1) - lineno;
+        if remaining_lines != 0 {
+            let remaining = Rect::new(
+                0, ((lineno as u32 + 1) * line_height) as i32,
+                wrap_width, remaining_lines as u32 * line_height
+            );
+            selections.push(remaining);
+        }
+        selections
+    } else {
+        let cx = cursor_x_pos(start, line, width_check);
+        if cx as u32 >= line_width {
+            Vec::new()
+        } else {
+            vec![Rect::new(cx, 0, cx as u32 - line_width, line_height)]
+        }
+    }
+}
+/// Returns the rectangles of a line in the middle of a selection that spans 
+/// multiple lines.
+pub fn selection_middle_line<F>(line: &str, width_check: &F, 
+        wrap_width: Option<u32>, line_width: u32, line_height: u32) 
+        -> Rect 
+        where F: Fn(&str) -> u32 {
+    if let Some(wrap_width) = wrap_width {
+        let linecount = wrap_line(line, width_check, wrap_width).len();
+        let height = (linecount as u32) * line_height;
+        Rect::new(0, 0, line_width, height)
+    } else {
+        Rect::new(0, 0, line_width, line_height)
+    }
+}
+
+/// Returns the rectangles of the last line of a selection that spans multiple
+/// lines.
+pub fn selection_last_line<F>(end: usize, line: &str, width_check: &F,
+        wrap_width: Option<u32>, line_height: u32) 
+        -> Vec<Rect> 
+        where F: Fn(&str) -> u32 {
+    if let Some(wrap_width) = wrap_width {
+        let mut selections = Vec::new();
+        let lines = wrap_line(line, width_check, wrap_width);
+        let (lineno, cx) = cursor_pos(end, &lines, width_check);
+        let last = Rect::new(
+            0, (lineno as u32 * line_height) as i32,
+            cx as u32, line_height
+        );
+        selections.push(last);
+        
+        if lineno > 0 {
+            let remainder = Rect::new(
+                0, 0,
+                wrap_width, lineno as u32 * line_height
+            );
+            selections.push(remainder);
+        }
+        selections
+    } else {
+        let cx = cursor_x_pos(end, line, width_check);
+        let rect = Rect::new(0, 0, cx as u32, line_height);
+        vec![rect]
+    }
 }
 
 #[cfg(test)]
@@ -376,29 +401,32 @@ mod tests {
         let res = cursor_x_pos(8, "hello", &width_check);
         assert_eq!(res, 5);
     }
-    // ashiotenashiotenashitoenashiteonsaihtoenasihotenasihoetnasiohetnaisohetnaisoehtnasioehtnasioehtnai
     
     #[test]
     fn test_cursor_pos_wrapped_first_line() {
-        let res = cursor_pos(2, TEXT, &width_check, Some(3));
+        let lines = wrap_line(TEXT, &width_check, 3);
+        let res = cursor_pos(2, &lines, &width_check);
         assert_eq!(res, (0, 2))
     }
     
     #[test]
     fn test_cursor_pos_wrapped_middle_line() {
-        let res = cursor_pos(3, TEXT, &width_check, Some(3));
+        let lines = wrap_line(TEXT, &width_check, 3);
+        let res = cursor_pos(3, &lines, &width_check);
         assert_eq!(res, (1, 0))
     }
     
     #[test]
     fn test_cursor_pos_wrapped_last_line() {
-        let res = cursor_pos(9, TEXT, &width_check, Some(3));
+        let lines = wrap_line(TEXT, &width_check, 3);
+        let res = cursor_pos(9, &lines, &width_check);
         assert_eq!(res, (3, 0))
     }
     
     #[test]
     fn test_cursor_pos_wrapped_past_end() {
-        let res = cursor_pos(11, TEXT, &width_check, Some(3));
+        let lines = wrap_line(TEXT, &width_check, 3);
+        let res = cursor_pos(11, &lines, &width_check);
         assert_eq!(res, (3, 1))
     }
 }

@@ -177,7 +177,7 @@ impl Textfield {
             self.lines[first.line] = text;
             
             let middle_lines = last.line - first.line;
-            for i in 0 .. middle_lines {
+            for _ in 0 .. middle_lines {
                 self.lines.remove(first.line + 1);
             }
         }
