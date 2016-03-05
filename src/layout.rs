@@ -65,41 +65,42 @@ pub fn cursor_pos<F>(col: usize, lines: &Vec<&str>, width_check: &F)
     }
 }
 
-/// Wraps a single (loooong) word to fit within the given line width.
+/// Find out where to wrap a word to make it fit based on the given function.
+/// The result is a list of character boundaries to split at.
 pub fn wrap_word<'a, F>(line: &'a str, should_wrap: &F)
-        -> Vec<&'a str> 
+        -> Vec<usize> 
         where F: Fn(&str) -> bool {
-    let mut lines = Vec::new();
+    let mut indices = Vec::new();
     let mut start = 0;
     let mut last_index = 0;
     for (cur_index, ch) in line.char_indices() {
+        if ch.is_whitespace() { // Ignore trailing whitespace
+            break;
+        }
         let next_index = cur_index + ch.len_utf8();
         if should_wrap(&line[start..next_index]) {
-            let part = &line[start..last_index];
-            if part != "" {
-                //println!("--- '{}'", part);
-                lines.push(part);
+            if start != last_index {
+                //println!("--- '{}'", &line[start..last_index]);
+                indices.push(last_index);
             }
             start = last_index;
             
         }
         last_index = next_index;
     }
-    let part = &line[start..];
-    //println!("--- '{}'", part);
-    lines.push(part);
-    lines
+    //println!("--- '{}'", &line[start..]);
+    indices
 }
 
-/// Splits the given text into lines of text fitting the given wrap width when
-/// using the given width checking function.
+/// Find out where to wrap the given line of text to make it fit based on the
+/// given function. The result is a list of character boundaries to split at.
 pub fn wrap_line<'a, F>(line: &'a str, should_wrap: &F)
-        -> Vec<&'a str> 
+        -> Vec<usize> 
         where F: Fn(&str) -> bool {
     if ! should_wrap(line) {
-        vec![line]
+        vec![]
     } else {
-        let mut lines = Vec::new();
+        let mut indices = Vec::new();
         
         let mut start = 0;
         let mut cur_word_begin = 0;
@@ -124,12 +125,16 @@ pub fn wrap_line<'a, F>(line: &'a str, should_wrap: &F)
                         if start == last_word_begin { // Single word read
                             let part = &line[start..cur_word_begin];
                             //println!("- '{}'", part);
-                            lines.append(&mut wrap_word(part, should_wrap));
+                            for index in wrap_word(part, should_wrap) {
+                                indices.push(start + index);
+                            };
+                            if cur_word_begin != line.len() {
+                                indices.push(start + part.len());
+                            }
                             start = cur_word_begin;
                         } else { // Two or more words read
-                            let part = &line[start..last_word_begin];
-                            //println!("- '{}'", part);
-                            lines.push(part);
+                            //println!("- '{}'", &line[start..last_word_begin]);
+                            indices.push(last_word_begin);
                             start = last_word_begin;
                         }
                     }
@@ -147,29 +152,41 @@ pub fn wrap_line<'a, F>(line: &'a str, should_wrap: &F)
             cur_word_begin = line.len();
         }
         
+        // The remainder should be wrapped
         if should_wrap(&line[start..cur_word_end]) {
-            if start == last_word_begin {
-                let part = &line[start..cur_word_begin];
+            if start == last_word_begin { // Single word
+                let part = &line[start..];
                 //println!("- '{}'", part);
-                lines.append(&mut wrap_word(part, should_wrap));
-            } else {
-                let part = &line[start..last_word_begin];
-                //println!("- '{}'", part);
-                lines.push(part);
-                start = last_word_begin;
-                
-                if start != line.len() {
-                    let part = &line[start..cur_word_begin];
+                for index in wrap_word(part, should_wrap) {
+                    indices.push(start + index);
+                }
+            } else { // Multiple words
+                if last_word_begin != line.len() {
+                    let part = &line[start..last_word_begin];
                     //println!("- '{}'", part);
-                    lines.push(part);
+                    if should_wrap(part) {
+                        for index in wrap_word(part, should_wrap) {
+                            indices.push(start + index);
+                        }
+                    }
+                    indices.push(last_word_begin);
+                    
+                    start = last_word_begin;
+                    if start != line.len() {
+                        let part = &line[start..];
+                        //println!("- '{}'", part);
+                        if should_wrap(part) {
+                            for index in wrap_word(&line[start..], should_wrap) {
+                                indices.push(start + index);
+                            }
+                        }                        
+                    }
                 }
             }
         } else {
-            let part = &line[start..];
-            //println!("- '{}'", part);
-            lines.push(part);
+            //println!("- '{}'", &line[start..]);
         }
-        lines
+        indices
     }
 }
 
@@ -314,49 +331,110 @@ mod tests {
     22 333\
     ";
     
+    const TEXT5: &'static str = "\
+    333 \
+    123\
+    456\
+    789\
+    0 ";
+    
     fn width_check(t: &str) -> u32 {
         t.chars().count() as u32
     }
     
+    fn should_wrap_3(t: &str) -> bool {
+        t.chars().count() > 3
+    }
+    
+    fn should_wrap_2(t: &str) -> bool {
+        t.chars().count() > 2
+    }
+    
+    fn should_wrap_6(t: &str) -> bool {
+        t.chars().count() > 6
+    }
+    
+    fn wrap_word_text<'a, F>(line: &'a str, should_wrap: &F) 
+            -> Vec<&'a str> 
+            where F: Fn(&str) -> bool {
+        let indices = wrap_word(line, should_wrap);
+        if ! indices.is_empty() {
+            let mut lines = Vec::new();
+            let mut start = 0;
+            for index in indices {
+                lines.push(&line[start..index]);
+                start = index;
+            }
+            lines.push(&line[start..]);
+            lines
+        } else {
+            vec![line]
+        }
+    }
+    
+    fn wrap_line_text<'a, F>(line: &'a str, should_wrap: &F) 
+            -> Vec<&'a str> 
+            where F: Fn(&str) -> bool {
+        let indices = wrap_line(line, should_wrap);
+        if ! indices.is_empty() {
+            let mut lines = Vec::new();
+            let mut start = 0;
+            for index in indices {
+                lines.push(&line[start..index]);
+                start = index;
+            }
+            lines.push(&line[start..]);
+            lines
+        } else {
+            vec![line]
+        }
+    }
+    
     #[test]
     fn test_wrap_word() {
-        let res = wrap_word(TEXT, &width_check, 3);
+        let res = wrap_word_text(TEXT, &should_wrap_3);
         assert_eq!(res, vec!["123", "456", "789", "0"]);
     }
     
     #[test]
     fn test_wrap_line_long() {
-        let res = wrap_line(TEXT, &width_check, 3);
+        let res = wrap_line_text(TEXT, &should_wrap_3);
         assert_eq!(res, vec!["123", "456", "789", "0"]);
     }
     
     #[test]
     fn test_wrap_line_long_multiple() {
-        let res = wrap_line(TEXT3, &width_check, 3);
+        let res = wrap_line_text(TEXT3, &should_wrap_3);
         assert_eq!(res, vec!["123", "456", "789", "0 ", "333 "]);
     }
     
     #[test]
+    fn test_wrap_line_long_multiple_non_first() {
+        let res = wrap_line_text(TEXT5, &should_wrap_3);
+        assert_eq!(res, vec!["333 ", "123", "456", "789", "0 "]);
+    }
+    
+    #[test]
     fn test_wrap_line_long_no_remainder() {
-        let res = wrap_line(TEXT, &width_check, 2);
+        let res = wrap_line_text(TEXT, &should_wrap_2);
         assert_eq!(res, vec!["12", "34", "56", "78", "90"]);
     }
     
     #[test]
     fn test_wrap_line_multiple_three() {
-        let res = wrap_line(TEXT2, &width_check, 3);
+        let res = wrap_line_text(TEXT2, &should_wrap_3);
         assert_eq!(res, vec!["333 ", "22     ", "1 ", "4444  ", "22 ", "333   "]);
     }
     
     #[test]
     fn test_wrap_line_multiple_six() {
-        let res = wrap_line(TEXT2, &width_check, 6);
+        let res = wrap_line_text(TEXT2, &should_wrap_6);
         assert_eq!(res, vec!["333 22     ", "1 4444  ", "22 333   "]);
     }
     
     #[test]
     fn test_wrap_line_no_trailing_space() {
-        let res = wrap_line(TEXT4, &width_check, 6);
+        let res = wrap_line_text(TEXT4, &should_wrap_6);
         assert_eq!(res, vec!["333 22 ", "1 4444 ", "22 333"]);
     }
     
@@ -380,28 +458,28 @@ mod tests {
     
     #[test]
     fn test_cursor_pos_wrapped_first_line() {
-        let lines = wrap_line(TEXT, &width_check, 3);
+        let lines = wrap_line_text(TEXT, &should_wrap_3);
         let res = cursor_pos(2, &lines, &width_check);
         assert_eq!(res, (0, 2))
     }
     
     #[test]
     fn test_cursor_pos_wrapped_middle_line() {
-        let lines = wrap_line(TEXT, &width_check, 3);
+        let lines = wrap_line_text(TEXT, &should_wrap_3);
         let res = cursor_pos(3, &lines, &width_check);
         assert_eq!(res, (1, 0))
     }
     
     #[test]
     fn test_cursor_pos_wrapped_last_line() {
-        let lines = wrap_line(TEXT, &width_check, 3);
+        let lines = wrap_line_text(TEXT, &should_wrap_3);
         let res = cursor_pos(9, &lines, &width_check);
         assert_eq!(res, (3, 0))
     }
     
     #[test]
     fn test_cursor_pos_wrapped_past_end() {
-        let lines = wrap_line(TEXT, &width_check, 3);
+        let lines = wrap_line_text(TEXT, &should_wrap_3);
         let res = cursor_pos(11, &lines, &width_check);
         assert_eq!(res, (3, 1))
     }
