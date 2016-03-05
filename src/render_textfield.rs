@@ -111,11 +111,12 @@ pub fn render_textfield<'a>(field: &Textfield, rect: Rect,
     for (lineno, line) in field.lines.iter().enumerate() {
         let y_pos = y + (visual_lineno as u32 * height) as i32;
         let lines = if let Some(wrap_width) = wrap_width {
-            let indices = wrap_line(line, &should_wrap);
+            let indices = wrap_cache.entry(line.clone())
+                .or_insert_with(|| wrap_line(line, &should_wrap));
             if ! indices.is_empty() {
                 let mut lines = Vec::new();
                 let mut start = 0;
-                for index in indices {
+                for &mut index in indices {
                     lines.push(&line[start..index]);
                     start = index;
                 }
